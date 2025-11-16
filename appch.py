@@ -87,7 +87,7 @@ st.warning("""
     النتائج المقدمة هي تنبؤات بناءً على البيانات المدخلة ولا يجب اعتبارها تشخيصًا نهائيًا.
 """)
 
-st.markdown("<p style='text-align: center; font-size: 16px ; color: #000000;'>Created by Haider Abdul Jalil</p>", unsafe_allow_html=True)
+st.markdown("<p style='text-align: center; font-size: 20px ; color: #000000;'>Created by Haider Abdul Jalil</p>", unsafe_allow_html=True)
 
 st.markdown("---")
 st.subheader("📬  اكتب ملاحظة او رسالة")
@@ -151,6 +151,7 @@ if submit_button:
         
         except Exception as e:
             st.error(f"عفوًا، حدث خطأ أثناء محاولة إرسال الرسالة: {e}")
+
 
 
 

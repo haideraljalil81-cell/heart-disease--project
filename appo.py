@@ -95,6 +95,7 @@ with st.form(key='contact_form'):
     submit_button = st.form_submit_button(label='إرسال الرسالة')
 
 # --- دالة مساعدة لجلب معلومات المستخدم ---
+# --- دالة مساعدة لجلب معلومات المستخدم (محدثة وأكثر دقة) ---
 def get_user_info():
     import requests
     from streamlit.web.server.websocket_headers import _get_websocket_headers
@@ -102,81 +103,41 @@ def get_user_info():
     user_ip = "غير معروف"
     user_location = "غير معروف"
     
-    # 1. محاولة جلب IP المستخدم من ترويسة الاتصال
+    # 1. محاولة جلب IP المستخدم
     try:
         headers = _get_websocket_headers()
         if headers:
+            # X-Forwarded-For تعطينا IP المستخدم الحقيقي حتى لو كان خلف جدار حماية
             user_ip = headers.get("X-Forwarded-For")
             if user_ip:
                 user_ip = user_ip.split(',')[0]
     except:
-        pass # تجاهل الخطأ إذا لم نتمكن من جلب الترويسة (مثل في التشغيل المحلي)
+        pass
 
-    # 2. تحديد الموقع الجغرافي بناءً على IP
-    if user_ip and user_ip != "غير معروف":
+    # 2. تحديد الموقع الجغرافي (استخدام خدمة ipapi.co بدلاً من السابقة)
+    if user_ip and user_ip != "غير معروف" and user_ip != "127.0.0.1":
         try:
-            response = requests.get(f"http://ip-api.com/json/{user_ip}")
+            # هذه الخدمة تدعم HTTPS وهي أدق في تحديد الموقع
+            response = requests.get(f"https://ipapi.co/{user_ip}/json/")
             data = response.json()
-            if data['status'] == 'success':
-                country = data.get('country', '')
-                city = data.get('city', '')
-                user_location = f"{country} - {city}"
-        except:
-            user_location = "تعذر تحديد الموقع"
+            
+            # استخراج البيانات
+            country = data.get('country_name', '')
+            city = data.get('city', '')
+            region = data.get('region', '')
+            
+            # تنسيق الموقع
+            if country:
+                user_location = f"{country}, {city} ({region})"
+            else:
+                user_location = "لم يتم العثور على تفاصيل الموقع"
+                
+        except Exception as e:
+            user_location = f"خطأ في تحديد الموقع: {e}"
+            
+    elif user_ip == "127.0.0.1":
+        user_location = "موقع محلي (Localhost)"
             
     return user_ip, user_location
-
-if submit_button:
-    if not message_text:
-        st.warning("الرجاء كتابة رسالة قبل الإرسال.")
-    else:
-        # جلب بيانات المستخدم (IP والموقع)
-        ip_address, location = get_user_info()
-
-        # استيراد المكتبات اللازمة
-        import smtplib
-        import ssl
-        from email.message import EmailMessage
-
-        # --- قراءة الأسرار المخزنة (الخاصة بـ Gmail) ---
-        try:
-            SENDER_EMAIL = st.secrets["email"]
-            SENDER_PASSWORD = st.secrets["password"]
-            RECEIVER_EMAIL = st.secrets["email"]
-        except KeyError:
-            st.error("خطأ في إعدادات الخادم: لم يتم العثور على أسرار البريد الإلكتروني (email/password).")
-            st.stop()
-
-        # --- تجهيز الرسالة ---
-        msg = EmailMessage()
-        msg['Subject'] = f"رسالة جديدة + بيانات الموقع 🌍"
-        msg['From'] = SENDER_EMAIL
-        msg['To'] = RECEIVER_EMAIL
-        
-        # محتوى الرسالة (تمت إضافة المعلومات الجديدة)
-        body = f"""
-        لقد تلقيت رسالة جديدة من تطبيق Streamlit:
-        
-        الرسالة:
-        {message_text}
-        
-        ----------------------------------
-        بيانات المُرسل التقنية:
-        IP Address: {ip_address}
-        الموقع التقريبي: {location}
-        """
-        msg.set_content(body)
-
-        # --- إرسال الإيميل (باستخدام Gmail) ---
-        try:
-            context = ssl.create_default_context()
-            with smtplib.SMTP_SSL('smtp.gmail.com', 465, context=context) as smtp:
-                smtp.login(SENDER_EMAIL, SENDER_PASSWORD)
-                smtp.send_message(msg)
-            
-            st.success("تم إرسال رسالتك بنجاح! شكرًا لك.")
-        
-        except Exception as e:
-            st.error(f"عفوًا، حدث خطأ أثناء محاولة إرسال الرسالة: {e}")
 
 

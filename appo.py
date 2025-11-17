@@ -85,7 +85,7 @@ st.warning("""
     النتائج المقدمة هي تنبؤات بناءً على البيانات المدخلة ولا يجب اعتبارها تشخيصًا نهائيًا.
 """)
 
-# --- 6. قسم التواصل وإرسال الملاحظات (مع تحديد الموقع) ---
+# --- 6. قسم التواصل وإرسال الملاحظات (Gmail + معرفة الموقع) ---
 st.markdown("---")
 st.subheader("📬 هل لديك ملاحظة أو اقتراح؟")
 
@@ -102,22 +102,19 @@ def get_user_info():
     user_ip = "غير معروف"
     user_location = "غير معروف"
     
-    # 1. محاولة جلب IP المستخدم من ترويسة الاتصال (الطريقة الصحيحة في السيرفرات)
+    # 1. محاولة جلب IP المستخدم من ترويسة الاتصال
     try:
         headers = _get_websocket_headers()
         if headers:
-            # X-Forwarded-For هو المعيار لمعرفة IP العميل خلف السيرفر
             user_ip = headers.get("X-Forwarded-For")
             if user_ip:
-                # قد يحتوي على عدة IPs، نأخذ الأول
                 user_ip = user_ip.split(',')[0]
     except:
-        pass
+        pass # تجاهل الخطأ إذا لم نتمكن من جلب الترويسة (مثل في التشغيل المحلي)
 
     # 2. تحديد الموقع الجغرافي بناءً على IP
     if user_ip and user_ip != "غير معروف":
         try:
-            # نستخدم خدمة مجانية لتحويل IP إلى موقع
             response = requests.get(f"http://ip-api.com/json/{user_ip}")
             data = response.json()
             if data['status'] == 'success':
@@ -137,51 +134,49 @@ if submit_button:
         ip_address, location = get_user_info()
 
         # استيراد المكتبات اللازمة
-        from sendgrid import SendGridAPIClient
-        from sendgrid.helpers.mail import Mail
+        import smtplib
+        import ssl
+        from email.message import EmailMessage
 
-        # --- قراءة الأسرار المخزنة ---
+        # --- قراءة الأسرار المخزنة (الخاصة بـ Gmail) ---
         try:
-            API_KEY = st.secrets["SENDGRID_API_KEY"]
-            SENDER_EMAIL = st.secrets["SENDER_EMAIL"]
-            RECEIVER_EMAIL = st.secrets["RECEIVER_EMAIL"]
+            SENDER_EMAIL = st.secrets["email"]
+            SENDER_PASSWORD = st.secrets["password"]
+            RECEIVER_EMAIL = st.secrets["email"]
         except KeyError:
-            st.error("خطأ في إعدادات الخادم: لم يتم العثور على أسرار SendGrid.")
+            st.error("خطأ في إعدادات الخادم: لم يتم العثور على أسرار البريد الإلكتروني (email/password).")
             st.stop()
 
-        # --- تجهيز الرسالة (تمت إضافة المعلومات الجديدة هنا) ---
-        body = f"""
-        <strong>لقد تلقيت رسالة جديدة من تطبيق Streamlit:</strong>
-        <br><hr>
-        <strong>الرسالة:</strong><br>
-        {message_text}
-        <br><hr>
-        <strong>بيانات المُرسل التقنية:</strong><br>
-        <ul>
-            <li><strong>IP Address:</strong> {ip_address}</li>
-            <li><strong>الموقع التقريبي:</strong> {location}</li>
-        </ul>
-        """
+        # --- تجهيز الرسالة ---
+        msg = EmailMessage()
+        msg['Subject'] = f"رسالة جديدة + بيانات الموقع 🌍"
+        msg['From'] = SENDER_EMAIL
+        msg['To'] = RECEIVER_EMAIL
         
-        message = Mail(
-            from_email=SENDER_EMAIL,
-            to_emails=RECEIVER_EMAIL,
-            subject='رسالة جديدة + بيانات الموقع 🌍',
-            html_content=body # نستخدم html_content لتنسيق الرسالة بشكل جميل
-        )
+        # محتوى الرسالة (تمت إضافة المعلومات الجديدة)
+        body = f"""
+        لقد تلقيت رسالة جديدة من تطبيق Streamlit:
+        
+        الرسالة:
+        {message_text}
+        
+        ----------------------------------
+        بيانات المُرسل التقنية:
+        IP Address: {ip_address}
+        الموقع التقريبي: {location}
+        """
+        msg.set_content(body)
 
-        # --- إرسال الإيميل ---
+        # --- إرسال الإيميل (باستخدام Gmail) ---
         try:
-            sg = SendGridAPIClient(API_KEY)
-            response = sg.send(message)
+            context = ssl.create_default_context()
+            with smtplib.SMTP_SSL('smtp.gmail.com', 465, context=context) as smtp:
+                smtp.login(SENDER_EMAIL, SENDER_PASSWORD)
+                smtp.send_message(msg)
             
-            if response.status_code == 202:
-                st.success("تم إرسال رسالتك بنجاح! شكرًا لك.")
-            else:
-                st.error("حدث خطأ أثناء الإرسال. رمز الحالة: " + str(response.status_code))
+            st.success("تم إرسال رسالتك بنجاح! شكرًا لك.")
         
         except Exception as e:
             st.error(f"عفوًا، حدث خطأ أثناء محاولة إرسال الرسالة: {e}")
-
 
 

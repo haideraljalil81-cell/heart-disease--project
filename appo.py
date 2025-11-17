@@ -85,47 +85,90 @@ st.warning("""
     النتائج المقدمة هي تنبؤات بناءً على البيانات المدخلة ولا يجب اعتبارها تشخيصًا نهائيًا.
 """)
 
-# --- 6. قسم التواصل وإرسال الملاحظات (Gmail) ---
+# --- 6. قسم التواصل وإرسال الملاحظات (Gmail + معرفة الموقع) ---
 st.markdown("---")
 st.subheader("📬 هل لديك ملاحظة أو اقتراح؟")
 
+# نستخدم st.form لجمع المدخلات قبل إرسالها
 with st.form(key='contact_form'):
     message_text = st.text_area("اكتب رسالتك هنا...", height=150)
     submit_button = st.form_submit_button(label='إرسال الرسالة')
+
+# --- دالة مساعدة لجلب معلومات المستخدم ---
+def get_user_info():
+    import requests
+    from streamlit.web.server.websocket_headers import _get_websocket_headers
+    
+    user_ip = "غير معروف"
+    user_location = "غير معروف"
+    
+    # 1. محاولة جلب IP المستخدم من ترويسة الاتصال
+    try:
+        headers = _get_websocket_headers()
+        if headers:
+            user_ip = headers.get("X-Forwarded-For")
+            if user_ip:
+                user_ip = user_ip.split(',')[0]
+    except:
+        pass # تجاهل الخطأ إذا لم نتمكن من جلب الترويسة (مثل في التشغيل المحلي)
+
+    # 2. تحديد الموقع الجغرافي بناءً على IP
+    if user_ip and user_ip != "غير معروف":
+        try:
+            response = requests.get(f"http://ip-api.com/json/{user_ip}")
+            data = response.json()
+            if data['status'] == 'success':
+                country = data.get('country', '')
+                city = data.get('city', '')
+                user_location = f"{country} - {city}"
+        except:
+            user_location = "تعذر تحديد الموقع"
+            
+    return user_ip, user_location
 
 if submit_button:
     if not message_text:
         st.warning("الرجاء كتابة رسالة قبل الإرسال.")
     else:
-        # جلب المعلومات
+        # جلب بيانات المستخدم (IP والموقع)
         ip_address, location = get_user_info()
 
+        # استيراد المكتبات اللازمة
+        import smtplib
+        import ssl
+        from email.message import EmailMessage
+
+        # --- قراءة الأسرار المخزنة (الخاصة بـ Gmail) ---
         try:
-            # قراءة الأسرار من Streamlit Cloud
             SENDER_EMAIL = st.secrets["email"]
             SENDER_PASSWORD = st.secrets["password"]
-            RECEIVER_EMAIL = st.secrets["email"] # يرسل لنفس الإيميل
+            RECEIVER_EMAIL = st.secrets["email"]
+        except KeyError:
+            st.error("خطأ في إعدادات الخادم: لم يتم العثور على أسرار البريد الإلكتروني (email/password).")
+            st.stop()
 
-            # تجهيز الرسالة
-            msg = EmailMessage()
-            msg['Subject'] = f"رسالة جديدة + بيانات الموقع 🌍"
-            msg['From'] = SENDER_EMAIL
-            msg['To'] = RECEIVER_EMAIL
-            
-            body = f"""
-            لقد تلقيت رسالة جديدة من تطبيق Streamlit:
-            
-            الرسالة:
-            {message_text}
-            
-            ----------------------------------
-            بيانات المُرسل التقنية:
-            IP Address: {ip_address}
-            الموقع التقريبي: {location}
-            """
-            msg.set_content(body)
+        # --- تجهيز الرسالة ---
+        msg = EmailMessage()
+        msg['Subject'] = f"رسالة جديدة + بيانات الموقع 🌍"
+        msg['From'] = SENDER_EMAIL
+        msg['To'] = RECEIVER_EMAIL
+        
+        # محتوى الرسالة (تمت إضافة المعلومات الجديدة)
+        body = f"""
+        لقد تلقيت رسالة جديدة من تطبيق Streamlit:
+        
+        الرسالة:
+        {message_text}
+        
+        ----------------------------------
+        بيانات المُرسل التقنية:
+        IP Address: {ip_address}
+        الموقع التقريبي: {location}
+        """
+        msg.set_content(body)
 
-            # إرسال عبر Gmail SMTP
+        # --- إرسال الإيميل (باستخدام Gmail) ---
+        try:
             context = ssl.create_default_context()
             with smtplib.SMTP_SSL('smtp.gmail.com', 465, context=context) as smtp:
                 smtp.login(SENDER_EMAIL, SENDER_PASSWORD)
@@ -133,20 +176,7 @@ if submit_button:
             
             st.success("تم إرسال رسالتك بنجاح! شكرًا لك.")
         
-        except KeyError:
-             st.error("خطأ: لم يتم العثور على أسرار الإيميل (email/password) في إعدادات التطبيق.")
         except Exception as e:
-            st.error(f"عفوًا، حدث خطأ أثناء الإرسال: {e}")
-
-# --- 7. التذييل وإخلاء المسؤولية ---
-# الاسم يظهر بوضوح في الوضع النهاري والليلي
-st.markdown("<br><p style='text-align: center;'>Created by Haider Abdul Jalil</p>", unsafe_allow_html=True)
-
-st.markdown("---")
-st.warning("""
-    **إخلاء مسؤولية:** هذا النموذج هو أداة تعليمية وتجريبية ولا يغني عن الاستشارة الطبية المتخصصة. 
-    النتائج المقدمة هي تنبؤات بناءً على البيانات المدخلة ولا يجب اعتبارها تشخيصًا نهائيًا.
-""")
-
+            st.error(f"عفوًا، حدث خطأ أثناء محاولة إرسال الرسالة: {e}")
 
 

@@ -85,68 +85,103 @@ st.warning("""
     النتائج المقدمة هي تنبؤات بناءً على البيانات المدخلة ولا يجب اعتبارها تشخيصًا نهائيًا.
 """)
 
-# --- 6. قسم التواصل وإرسال الملاحظات (بدون إيميل المُرسل) ---
+# --- 6. قسم التواصل وإرسال الملاحظات (مع تحديد الموقع) ---
 st.markdown("---")
-st.subheader("📬  اكتب ملاحظة او رسالة")
+st.subheader("📬 هل لديك ملاحظة أو اقتراح؟")
 
 # نستخدم st.form لجمع المدخلات قبل إرسالها
 with st.form(key='contact_form'):
-    
-    # --- (تم إلغاء حقل إيميل المستخدم من هنا) ---
-    
-    # حقل الرسالة
     message_text = st.text_area("اكتب رسالتك هنا...", height=150)
-    
-    # زر الإرسال
     submit_button = st.form_submit_button(label='إرسال الرسالة')
 
-# هذا الكود يتم تنفيذه فقط عند الضغط على زر الإرسال
+# --- دالة مساعدة لجلب معلومات المستخدم ---
+def get_user_info():
+    import requests
+    from streamlit.web.server.websocket_headers import _get_websocket_headers
+    
+    user_ip = "غير معروف"
+    user_location = "غير معروف"
+    
+    # 1. محاولة جلب IP المستخدم من ترويسة الاتصال (الطريقة الصحيحة في السيرفرات)
+    try:
+        headers = _get_websocket_headers()
+        if headers:
+            # X-Forwarded-For هو المعيار لمعرفة IP العميل خلف السيرفر
+            user_ip = headers.get("X-Forwarded-For")
+            if user_ip:
+                # قد يحتوي على عدة IPs، نأخذ الأول
+                user_ip = user_ip.split(',')[0]
+    except:
+        pass
+
+    # 2. تحديد الموقع الجغرافي بناءً على IP
+    if user_ip and user_ip != "غير معروف":
+        try:
+            # نستخدم خدمة مجانية لتحويل IP إلى موقع
+            response = requests.get(f"http://ip-api.com/json/{user_ip}")
+            data = response.json()
+            if data['status'] == 'success':
+                country = data.get('country', '')
+                city = data.get('city', '')
+                user_location = f"{country} - {city}"
+        except:
+            user_location = "تعذر تحديد الموقع"
+            
+    return user_ip, user_location
+
 if submit_button:
     if not message_text:
         st.warning("الرجاء كتابة رسالة قبل الإرسال.")
     else:
+        # جلب بيانات المستخدم (IP والموقع)
+        ip_address, location = get_user_info()
+
         # استيراد المكتبات اللازمة
-        import smtplib
-        import ssl
-        from email.message import EmailMessage
+        from sendgrid import SendGridAPIClient
+        from sendgrid.helpers.mail import Mail
 
         # --- قراءة الأسرار المخزنة ---
-        # نقرأ الإيميل وكلمة المرور من "الأسرار" التي حفظناها
         try:
-            SENDER_EMAIL = st.secrets["email"]
-            SENDER_PASSWORD = st.secrets["password"]
-            # هذا هو الإيميل الذي ستصل إليه الرسائل (إيميلك أيضًا)
-            RECEIVER_EMAIL = st.secrets["email"]
+            API_KEY = st.secrets["SENDGRID_API_KEY"]
+            SENDER_EMAIL = st.secrets["SENDER_EMAIL"]
+            RECEIVER_EMAIL = st.secrets["RECEIVER_EMAIL"]
         except KeyError:
-            st.error("خطأ في إعدادات الخادم: لم يتم العثور على أسرار البريد الإلكتروني.")
+            st.error("خطأ في إعدادات الخادم: لم يتم العثور على أسرار SendGrid.")
             st.stop()
 
-        # --- تجهيز الرسالة ---
-        msg = EmailMessage()
-        msg['Subject'] = f"رسالة جديدة من تطبيق أمراض القلب"
-        msg['From'] = SENDER_EMAIL
-        msg['To'] = RECEIVER_EMAIL
-        
-        # --- (تم تعديل محتوى الرسالة هنا) ---
+        # --- تجهيز الرسالة (تمت إضافة المعلومات الجديدة هنا) ---
         body = f"""
-        لقد تلقيت رسالة جديدة من تطبيق Streamlit:
-        
-        الرسالة:
+        <strong>لقد تلقيت رسالة جديدة من تطبيق Streamlit:</strong>
+        <br><hr>
+        <strong>الرسالة:</strong><br>
         {message_text}
+        <br><hr>
+        <strong>بيانات المُرسل التقنية:</strong><br>
+        <ul>
+            <li><strong>IP Address:</strong> {ip_address}</li>
+            <li><strong>الموقع التقريبي:</strong> {location}</li>
+        </ul>
         """
-        msg.set_content(body)
+        
+        message = Mail(
+            from_email=SENDER_EMAIL,
+            to_emails=RECEIVER_EMAIL,
+            subject='رسالة جديدة + بيانات الموقع 🌍',
+            html_content=body # نستخدم html_content لتنسيق الرسالة بشكل جميل
+        )
 
         # --- إرسال الإيميل ---
         try:
-            # إنشاء اتصال آمن بـ Gmail
-            context = ssl.create_default_context()
-            with smtplib.SMTP_SSL('smtp.gmail.com', 465, context=context) as smtp:
-                smtp.login(SENDER_EMAIL, SENDER_PASSWORD)
-                smtp.send_message(msg)
+            sg = SendGridAPIClient(API_KEY)
+            response = sg.send(message)
             
-            st.success("تم إرسال رسالتك بنجاح! شكرًا لك.")
+            if response.status_code == 202:
+                st.success("تم إرسال رسالتك بنجاح! شكرًا لك.")
+            else:
+                st.error("حدث خطأ أثناء الإرسال. رمز الحالة: " + str(response.status_code))
         
         except Exception as e:
             st.error(f"عفوًا، حدث خطأ أثناء محاولة إرسال الرسالة: {e}")
+
 
 
